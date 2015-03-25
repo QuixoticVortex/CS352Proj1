@@ -10,26 +10,33 @@ void do_something()
 	myid++;
 	printf ("This is ult %d\n", id); //just for demo purpose
 	if(n_threads<5){
+		printf("Create new: %d\n", myid);
 		uthread_create(do_something);
 		n_threads++;
 		printf ("ult %d yields \n",id );
 		uthread_yield ();
 		printf ("ult %d resumes \n",id);
+		printf("Create new: %d\n", myid);
 		uthread_create(do_something);
 		n_threads++;
 	}
-	printf ("ult %d starts I/O \n",id);
+	/*printf ("ult %d starts I/O \n",id);
 	uthread_startIO();
 	sleep (2); //simulate some long−time I/O operation
 	uthread_endIO();
-	printf ("ult %d returns from I/O \n",id);
+	printf ("ult %d returns from I/O \n",id); */
+	printf("ult %d exits\n", id);
 	uthread_exit ();
+	printf("After exit - %d?\n", id);
 }
 
 int main()
 {
 	int i ;
 	system_init ();
+	printf("create first thread\n");
 	uthread_create(do_something);
+	printf("main exits\n");
 	uthread_exit ();
+	printf("After exit - main?\n");
 }
