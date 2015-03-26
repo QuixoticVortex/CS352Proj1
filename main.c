@@ -10,13 +10,11 @@ void do_something()
 	myid++;
 	printf ("This is ult %d\n", id); //just for demo purpose
 	if(n_threads<5){
-		printf("Create new: %d\n", myid);
 		uthread_create(do_something);
 		n_threads++;
 		printf ("ult %d yields \n",id );
 		uthread_yield ();
 		printf ("ult %d resumes \n",id);
-		printf("Create new: %d\n", myid);
 		uthread_create(do_something);
 		n_threads++;
 	}
