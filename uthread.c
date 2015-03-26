@@ -144,7 +144,7 @@ void system_init() {
 
 	list_node *main_node = create_node_and_context(); 
 
-	enq(main_node);
+	enq(main_node); // Currently executing main thread is only thread on queue
 }
 
 /*
@@ -289,7 +289,6 @@ void uthread_exit() {
 		ucontext_t *context = head->current; 
 		sem_post(&lock);
 		void* stack = deep_free_node(cur); 
-		free(stack);
 		setcontext(context); // And we never return
 	}
 	
