@@ -9,7 +9,7 @@ void do_something()
 	id=myid;
 	myid++;
 	printf ("This is ult %d\n", id); //just for demo purpose
-	if(n_threads<5){
+/*	if(n_threads<5){
 		uthread_create(do_something);
 		n_threads++;
 		printf ("ult %d yields \n",id );
@@ -17,15 +17,16 @@ void do_something()
 		printf ("ult %d resumes \n",id);
 		uthread_create(do_something);
 		n_threads++;
-	}
-	/*printf ("ult %d starts I/O \n",id);
+	}*/
+	/*printf("ult %d starts I/O \n",id);
 	uthread_startIO();
-	sleep (2); //simulate some long−time I/O operation
+	sleep (1); //simulate some long−time I/O operation
+	printf("calling endIO - %d \n", id);
 	uthread_endIO();
-	printf ("ult %d returns from I/O \n",id); */
+	printf("ult %d returns from I/O \n",id); */
 	printf("ult %d exits\n", id);
 	uthread_exit ();
-	printf("After exit - %d?\n", id);
+	printf("After exit - %d?\n\n", id);
 }
 
 int main()

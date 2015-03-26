@@ -1,8 +1,13 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <semaphore.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <ucontext.h>
+#include <sched.h>
+#include <sys/types.h>
+#include <unistd.h>
+
 
 #define STACK_SIZE 16384
 
@@ -16,6 +21,7 @@ void uthread_exit();
 struct list_n {
 	struct list_n *next;
 	ucontext_t *current;
+	pid_t id;
 };
 
 typedef struct list_n list_node;
@@ -25,6 +31,7 @@ int kernel_threads = 0;
 int list_size;
 list_node *head;
 list_node *tail;
+list_node *waiting_head;
 
 list_node* deq() {
 	list_node* node = head;
@@ -46,6 +53,16 @@ list_node* deq() {
 	}	
 }
 
+void push(list_node *node) {
+	node->next = head;
+	head = node;
+	if(list_size == 0) {
+		tail = node;
+	}
+	list_size++;
+	return;
+}
+
 void enq(list_node *node) {
 	if(list_size == 0) {
 		head = tail = node;
@@ -64,20 +81,53 @@ void enq(list_node *node) {
 list_node* create_node_and_context() {
 	ucontext_t *context = (ucontext_t *) malloc(sizeof(ucontext_t));
 	getcontext(context);
-	context->uc_stack.ss_sp = malloc(STACK_SIZE);
+	context->uc_stack.ss_sp = (void*) malloc(STACK_SIZE);
 	context->uc_stack.ss_size = STACK_SIZE;
 	
 	list_node *new_node = (list_node *) malloc(sizeof(list_node));
 	new_node->current = context;
 	new_node->next = NULL;
+	new_node->id = 0;
 	return new_node;
 }
 
-void deep_free_node(list_node *cur) {
-	free(cur->current->uc_stack.ss_sp);
-	free(cur->current);
+void *deep_free_node(list_node *cur) {
+	void* stack = cur->current->uc_stack.ss_sp;
+	ucontext_t *current = cur->current;
 	free(cur);
+	free(current);
+	return stack;
+}
+
+void free_kernel_stack(void *cur) {
+	free(cur - STACK_SIZE + 1);
 	return;
+}
+
+void* new_kernel_stack() {
+	void *stack = (void*) malloc(STACK_SIZE);
+	stack += STACK_SIZE - 1;
+	return stack;
+}
+
+int new_kernel_thread(void *my_stack) {
+	sem_wait(&lock);
+
+	if(list_size < 1) {
+		printf("New kernel thread usage error: Ensure 1 thread on ready queue when calling\n\n");
+		sem_post(&lock);
+		return 0;
+	}
+	else {
+		list_node *next = head;
+		free_kernel_stack(my_stack);
+
+		ucontext_t *context = next->current; 
+		sem_post(&lock);
+		printf("Created new thread. Now executing\n");
+		setcontext(context); // And we never return
+		return 0;
+	}
 }
 
 /*
@@ -90,6 +140,7 @@ void system_init() {
 	kernel_threads = 1;	
 	list_size = 0;
 	head = tail = NULL;
+	waiting_head = NULL;
 
 	list_node *main_node = create_node_and_context(); 
 
@@ -107,10 +158,18 @@ int uthread_create(void (* func)()) {
 	enq(new_node);
 	
 	if(list_size == 1) { // There was no thread running previously, so we need to start one
-		// Start a new kernel thread for this user thread to run on TODO
+		// Start a new kernel thread for this user thread to run on 
+		printf("Starting new kernel thread from create\n");	
+		void* child_stack = new_kernel_stack();
+		sem_post(&lock);
+		clone(new_kernel_thread, child_stack, 
+			CLONE_VM|CLONE_FILES, child_stack); 	// TODO -use return values
+
+		return 0;
 	}
 
 	sem_post(&lock);	
+	return 0;
 }
 
 /*
@@ -120,12 +179,20 @@ int uthread_startIO() {
 	sem_wait(&lock);
 	// Assume this function is at head of queue
 	list_node *cur = deq();
+	cur->next = waiting_head;
+	waiting_head = cur;
+	cur->id = getpid(); // This will stay the same when we endIO, so we can relocate this
 	
-	if(list_size == 1) {
-		// Nothing to do after we remove this guy	
+	if(list_size == 0) {
+		// Nothing to do 
 	}
 	else { 
-		// Start a new kernel thread for this to run on
+		// Start a new kernel thread for next to run on
+		
+		void *child_stack = new_kernel_stack();	
+		clone(new_kernel_thread, child_stack, CLONE_VM|CLONE_FILES, child_stack); 	
+		sem_post(&lock);
+		return 0;
 	}
 	
 	sem_post(&lock);
@@ -135,10 +202,43 @@ int uthread_startIO() {
 This function should be called right after it finishes I/O operations. We assume that when this function is called, the state of the calling process is switched from waiting state to ready state. It should save the context of current thread and put it in the ready queue. Note that the kernel thread it is currently associated with needs to be terminated after this function is called, because its kernel thread is only for initiating I/O and waiting for the I/O to be completed. The function returns 0 on success and -1 otherwise.
 */
 int uthread_endIO() {
-	sem_wait(&lock);
 
+	sem_wait(&lock); // Ensure mutual exclusion when operating on shared data
 	
-	sem_post(&lock);
+	// Search for our thread
+	list_node *new_node = waiting_head;
+	list_node *prev = NULL;
+	while(new_node->id != getpid()) {
+		prev = new_node;
+		new_node = new_node->next;
+	}
+	
+	if(prev == NULL) {
+		waiting_head = new_node->next;
+	}
+	else {
+		prev->next = new_node->next;
+	}
+	
+	enq(new_node);
+	
+	if(list_size == 1) { // There was no thread running previously, so we need to start one
+		// Start a new kernel thread for this user thread to run on 
+		
+		//void* child_stack = new_kernel_stack();
+		//clone(new_kernel_thread, child_stack, 
+		//	CLONE_VM|CLONE_FILES, child_stack); 	// TODO -use return values
+
+		sem_post(&lock);
+		//getcontext(new_node->current);
+		//swapcontext(new_node->current, head->current);
+		return 0;
+	}
+	else {
+		sem_post(&lock);
+		swapcontext(new_node->current, head->current);
+		return 0;
+	}
 }
 
 /*
@@ -177,18 +277,19 @@ void uthread_exit() {
 	
 	list_node *cur = deq();
 	
-	free(cur->current->uc_stack.ss_sp);
-	free(cur->current);
-	free(cur);
-	
+
 	if(list_size == 0) { // No threads left to schedule, so we let this one die
 		sem_post(&lock);
+		void* stack = deep_free_node(cur); 
+		free(stack);
 		exit(0);
 	}
 	else {
 		// Get current head and start executing it
 		ucontext_t *context = head->current; 
 		sem_post(&lock);
+		void* stack = deep_free_node(cur); 
+		free(stack);
 		setcontext(context); // And we never return
 	}
 	
