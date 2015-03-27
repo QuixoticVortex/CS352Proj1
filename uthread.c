@@ -110,13 +110,6 @@ void purge_deletionq(struct list *list) {
 	}
 }
 
-
-void* new_kernel_stack() {
-	void *stack = (void*) malloc(STACK_SIZE);
-	stack += STACK_SIZE - 1;
-	return stack;
-}
-
 int new_kernel_thread(void *my_node) {
 	sem_wait(&lock);
 	//printf("new kernel thread\n");
@@ -146,6 +139,7 @@ int new_kernel_thread(void *my_node) {
 	}
 }
 
+
 /*
 This function has to be called before any other uthread library functions can be called. It initializes the uthread system. The library should maintain data structure of a ready queue, number of currently running kernel threads (should not exceed 1 in this project) and number of processes that are currently waiting for the I/O operation.
 
@@ -173,6 +167,10 @@ void check_new_thread() {
 	}
 }
 
+void callfunc(void (*func)()) {
+	sem_post(&lock);
+	func();
+}
 /*
 The calling thread requests to create a user-level thread that runs the function func. The context of function should be properly created and stored on the ready queue for execution. The function returns 0 on success and -1 otherwise
 */
@@ -184,9 +182,6 @@ int uthread_create(void (* func)()) {
 	makecontext(new_node->current, func, 0); // Create a new context with a new stack which will start execution of our function
 
 	enq(&ready, new_node);
-	
-	printf("checking new - create\n");
-	check_new_thread();
 
 	sem_post(&lock);	
 	return 0;
