@@ -1,0 +1,18 @@
+How to compile and run: 
+	:> make clean
+	:> make
+	:> ./main
+
+Implementation Notes:
+	I have struggled for 3 days on a segmentation fault bug, however I cannot seem to find it.
+	I've completely changed strategies three times but all seem to have the same pitfalls.
+
+	Basically, this will work correctly sometimes. Other times, it will seg fault. Other times, it will print that a thread is finishing I/O multiple times, which seems to indicate that a thread context is being started multiple times. I have no idea how this is happening. It is almost definitely due to a race condition of some sort, but I have nearly everything well-locked, so I don't know why this happens.  
+	
+	This may be because of a race condition created whenever we have to release a lock then switch context, like so: 
+		sem_post(&lock);
+		switchcontext(...);
+	As far as I know, there is no way to do this atomically, so we could see weird behavior resulting from this. 
+
+	I also note that I no longer free any memory correctly. At one point, I had an implementation where I freed memory by freeing old contexts immediately, and adding old stack pointers to a deletion queue. Each method would 'purge' the deletion queue by freeing all stacks in the queue and emptying it. I removed this functionality in order to find the seg fault bug and never had a chance to add it. 
+

@@ -24,7 +24,7 @@ static int waiting_threads;
 // The ready queue
 static struct list ready; 
 
-// Initialize a list
+// Initializes a list
 void init_list(struct list *list) {
 	list->head = NULL;
 	list->tail = NULL;
@@ -125,6 +125,9 @@ void system_init() {
 
 /*
 The calling thread requests to create a user-level thread that runs the function func. The context of function should be properly created and stored on the ready queue for execution. The function returns 0 on success and -1 otherwise
+
+Rationale:
+Here, we need only create a new context for our function and add it to the ready queue, careful to synchronize correctly.
 */
 int uthread_create(void (* func)()) {
 	list_node *new_node = create_node_and_context();
@@ -138,19 +141,25 @@ int uthread_create(void (* func)()) {
 
 /*
 The calling thread calls this function before it requests for I/O operations(scanf, printf, read, write etc.). We assume that when this function is called, the state of the calling thread transits from running state to waiting state and will not run on CPU actively. Therefore, it will create a new kernel thread and schedule the first thread in the ready queue to run(assuming the scheduling algorithm used is FCFS). This calling user-level thread will remain associated with its current kernel thread, initiating I/O and then waiting for it to complete. This function returns 0 on success and -1 otherwise
+
+Rationale: 
+We simply update the wating thread count and create a new kernel thread which will take care of executing the other threads in the queue, or exit if there are none. 
 */
 int uthread_startIO() {
 	sem_wait(&lock);
 	waiting_threads++;
 	sem_post(&lock);
 	// Start a new thread which will run new_kernel_thread
-	clone(new_kernel_thread, ((void*)malloc(STACK_SIZE)) + STACK_SIZE, CLONE_VM, NULL); // TODO
+	clone(new_kernel_thread, ((void*)malloc(STACK_SIZE)) + STACK_SIZE, CLONE_VM, NULL);
 
 	return 0;
 }
 
 /*
 This function should be called right after it finishes I/O operations. We assume that when this function is called, the state of the calling process is switched from waiting state to ready state. It should save the context of current thread and put it in the ready queue. Note that the kernel thread it is currently associated with needs to be terminated after this function is called, because its kernel thread is only for initiating I/O and waiting for the I/O to be completed. The function returns 0 on success and -1 otherwise.
+
+Rationale: 
+Here, we decrement the number of waiting threads, then if there is no executing kernel thread, we use this thread as the kernel thread by adding this to the end of the ready queue and starting execution of the next thread on the ready queue, careful to do so under synchronization. If there is a kernel thread running, we simply add this thread to the ready queue.
 */
 int uthread_endIO() {
 	sem_wait(&lock);
@@ -185,6 +194,9 @@ int uthread_endIO() {
 
 /*
 The calling thread requests to yield the kernel thread to another process. It should save the context of current running thread and load the first one on the ready queue(assuming the scheduling algorithm used is FCFS). The function returns 0 on success and -1 otherwise.
+
+Rationale: 
+If there are no other threads on the queue, just keep executing. Otherwise, save our context and add it to the end of the queue, then start execution of the next thread on the ready queue.
 */
 int uthread_yield() {
 	sem_wait(&lock);
@@ -208,6 +220,9 @@ int uthread_yield() {
 
 /*
 This function is called when the calling user-level thread ends its execution. It should schedule the first user-level thread in the ready queue for running.
+
+Rationale: 
+Here, we check to see if there is a thread waiting for execution. If so, we stat executing it. Otherwise, we let this thread die.
 */
 void uthread_exit() {
 	sem_wait(&lock);
