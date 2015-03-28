@@ -10,6 +10,7 @@
 
 
 #define STACK_SIZE 16384
+#define DEBUG 0
 
 void system_init();
 int uthread_create(void (* func)());
@@ -28,17 +29,15 @@ struct list_n {
 typedef struct list_n list_node;
 
 struct list {
-	list_node *head;
-	list_node *tail;
-	int size;	
+	volatile list_node *head;
+	volatile list_node *tail;
+	volatile int size;	
 };
 
 sem_t lock;
-int kernel_threads;
+volatile int kernel_threads;
 
 struct list ready; 
-struct list waiting;
-struct list deletion;
 
 
 void init_list(struct list *list) {
@@ -84,11 +83,11 @@ void enq(struct list *list, list_node *node) {
 
 list_node* create_node_and_context() {
 	ucontext_t *context = (ucontext_t *) malloc(sizeof(ucontext_t));
-	getcontext(context);
 	context->uc_stack.ss_sp = (void*) malloc(STACK_SIZE);
 	context->uc_stack.ss_size = STACK_SIZE;
 	context->uc_stack.ss_flags = 0;
 	context->uc_link = NULL;
+	getcontext(context);
 	
 	list_node *new_node = (list_node *) malloc(sizeof(list_node));
 	new_node->current = context;
@@ -98,9 +97,9 @@ list_node* create_node_and_context() {
 }
 
 void deep_free_node(list_node *cur) {
-	free(cur->current->uc_stack.ss_sp);
-	free(cur->current);
-	free(cur);
+	//free(cur->current->uc_stack.ss_sp);
+	//free(cur->current);
+	//free(cur);
 }
 
 void purge_deletionq(struct list *list) {
@@ -112,29 +111,26 @@ void purge_deletionq(struct list *list) {
 
 int new_kernel_thread(void *my_node) {
 	sem_wait(&lock);
-	//printf("new kernel thread\n");
+	if (DEBUG) printf("acquired lock in thread_new\n");
 	if(kernel_threads > 0) {
-		printf("aborting new thread\n");
+		if (DEBUG) printf("GETTOUT\n");
 		sem_post(&lock);
 		return 0;
 	}
+
 	if(ready.size < 1) {
-		//printf("New kernel thread usage error: Ensure 1 thread on ready queue when calling\n\n");
+		if (DEBUG) printf("nothing to do\n");
 		sem_post(&lock);
 		return 0;
 	}
 	else {
-		printf("starting new thread\n");
+		if (DEBUG) printf("running buddy\n");
 		kernel_threads = 1;
-		list_node *next = ready.head;
+		list_node *next = deq(&ready);
 
 		ucontext_t *context = next->current; 
-		enq(&deletion, my_node);
-		//printf("Created new thread. Now executing\n");
-		//printf("leaving new thread init\n");
 		sem_post(&lock);
-		int res = swapcontext(((list_node *)my_node)->current, context); // And we never return
-		//printf("swap result: %d\n", res);
+		setcontext(context);
 		return 0;
 	}
 }
@@ -147,37 +143,20 @@ Assumption: This is only ever called once, from the main thread (which we will u
 */
 void system_init() {
 	sem_init(&lock, 0, 1);
+
 	kernel_threads = 1;	
 
 	init_list(&ready);
-	init_list(&deletion);
-	init_list(&waiting);
-
-	list_node *main_node = create_node_and_context(); 
-
-	enq(&ready, main_node); // Currently executing main thread is only thread on queue
 }
 
 
-void check_new_thread() {
-	if(kernel_threads == 0) {
-		printf("attempting new thread\n");
-		list_node *new_node = create_node_and_context();
-		clone(new_kernel_thread, new_node->current->uc_stack.ss_sp + STACK_SIZE-1, CLONE_VM|CLONE_FILES, new_node); 	
-	}
-}
-
-void callfunc(void (*func)()) {
-	sem_post(&lock);
-	func();
-}
 /*
 The calling thread requests to create a user-level thread that runs the function func. The context of function should be properly created and stored on the ready queue for execution. The function returns 0 on success and -1 otherwise
 */
 int uthread_create(void (* func)()) {
 	sem_wait(&lock); // Ensure mutual exclusion when operating on shared data
-	//printf("in - create\n");	
-	purge_deletionq(&deletion);
+	if(DEBUG) printf("acquired lock in create\n");
+
 	list_node *new_node = create_node_and_context();
 	makecontext(new_node->current, func, 0); // Create a new context with a new stack which will start execution of our function
 
@@ -192,18 +171,12 @@ The calling thread calls this function before it requests for I/O operations(sca
 */
 int uthread_startIO() {
 	sem_wait(&lock);
-	//printf("enter startio\n");	
-	purge_deletionq(&deletion);
-	//printf("purged\n");
-	// Assume this function is at head of queue
-	list_node *cur = deq(&ready);
-	enq(&waiting, cur);
-	cur->id = getpid(); // This will stay the same when we endIO, so we can relocate this
-	printf("in startio %d threads\n", kernel_threads);
+	if(DEBUG) printf("acquired lock in start\n");
 	kernel_threads = 0;
-	printf("checking new - start\n");
-	check_new_thread();
+	clone(new_kernel_thread, ((void*)malloc(STACK_SIZE)) + STACK_SIZE - 1, CLONE_VM|CLONE_FILES, NULL);
+	if(DEBUG) printf("release lock in start\n");
 	sem_post(&lock);
+
 	return 0;
 }
 
@@ -211,14 +184,13 @@ int uthread_startIO() {
 This function should be called right after it finishes I/O operations. We assume that when this function is called, the state of the calling process is switched from waiting state to ready state. It should save the context of current thread and put it in the ready queue. Note that the kernel thread it is currently associated with needs to be terminated after this function is called, because its kernel thread is only for initiating I/O and waiting for the I/O to be completed. The function returns 0 on success and -1 otherwise.
 */
 int uthread_endIO() {
-
-	sem_wait(&lock); // Ensure mutual exclusion when operating on shared data
-	printf("in - endio\n");	
-	purge_deletionq(&deletion);
+	sem_wait(&lock); 
+	if(DEBUG) printf("acquired lock in endio\n");
 
 	// Search for our thread
-	list_node *new_node = waiting.head;
+	/*list_node *new_node = waiting.head;
 	list_node *prev = NULL;
+
 	while(new_node->id != getpid()) {
 		prev = new_node;
 		new_node = new_node->next;
@@ -233,31 +205,35 @@ int uthread_endIO() {
 	if(new_node->next == NULL) {
 		waiting.tail = prev;
 	}
+
 	waiting.size--;
+
 	if(new_node->id != getpid()){
 		printf("\n\nCRITICAL ERROR\n\n");
 	}
-	
-	enq(&ready, new_node);
-	if(kernel_threads == 0) {
-		//printf("no kernel threds in end\n");
+
+	new_node->next = NULL;
+	*/
+	if(kernel_threads == 0) { // No one else is running, so we will use this thread
 		kernel_threads = 1;
-		if(ready.size == 1) {
+		if(ready.size == 0) {
 			// we just exit and keep on executing
-			printf("i am alone in end\n");
 			sem_post(&lock);
 		}
 		else {
 			// we should take the first off the ready queue
-			printf("i must swap in end\n");
+			list_node *cur = create_node_and_context();
+			enq(&ready, cur);
+			list_node *next = deq(&ready);
 			sem_post(&lock);
-			swapcontext(new_node->current, ready.head->current);	
+			swapcontext(cur->current, next->current);	
 		}
 	}
 	else {
-		// do nothing
-		printf("some other thread in end\n");
+		list_node *cur = create_node_and_context();
+		enq(&ready, cur);
 		sem_post(&lock);
+		getcontext(cur->current);
 	}
 	return 0;
 }
@@ -267,27 +243,20 @@ The calling thread requests to yield the kernel thread to another process. It sh
 */
 int uthread_yield() {
 	sem_wait(&lock);
-	//printf("in - yield\n");	
-	purge_deletionq(&deletion);
+
 	// Remove from head of queue and add to end
 	if(ready.size == 0) {
-		// This should never, ever happen. At the very least, this thread is still on the ready queue
-		printf("ERROR: ENCOUNTERED EMPTY READY QUEUE IN UTHREAD_YIELD");
-		sem_post(&lock);
-		return -1;
-	}
-	if(ready.size == 1) {
-		// This is the only one on the ready queue, so let's just keep on executing
+		// Do nothing and keep executing
 		sem_post(&lock);
 		return 0;
 	}
 	else {
-		// Save our context, remove from front of queue
-		list_node *cur = deq(&ready); // Assume we are on front of queue, since we are executing
+		list_node *next = deq(&ready); 
+		list_node *cur = create_node_and_context();
 		enq(&ready, cur);
 
 		sem_post(&lock); 
-		swapcontext(cur->current, ready.head->current);
+		swapcontext(cur->current, next->current);
 		return 0;
 	}	
 }
@@ -297,26 +266,24 @@ This function is called when the calling user-level thread ends its execution. I
 */
 void uthread_exit() {
 	sem_wait(&lock);
-	//printf("in - exit\n");
-	purge_deletionq(&deletion);
-	list_node *cur = deq(&ready);
-	enq(&deletion, cur);
+	if(DEBUG) printf("acquired lock in exit\n");
 
 	if(ready.size == 0) { // No threads left to schedule, so we let this one die
-		//printf("empty queue in exit - die\n");
+		//if(DEBUG) printf("no threads left in exit\n");
 		kernel_threads = 0;
+		if(DEBUG) printf("releasing lock in exit\n");
 		sem_post(&lock);
 		exit(0);
 	}
 	else {
-		kernel_threads = 1;
 		// Get current head and start executing it
-		ucontext_t *context = ready.head->current; 
-		//printf("non-empty in exit - swap\n");
+		//if(DEBUG) printf("some threads left in exit\n");
+		list_node *next = deq(&ready); 
+		//if(DEBUG) printf("next: %d\n", next);
+		if(DEBUG) printf("releasing lock in exit\n");
 		sem_post(&lock);
-		int res = swapcontext(cur->current, context); // And we never return
-		//printf("swap result: %d\n", res);
-		// Can't happen
+		int res = setcontext(next->current);
+		if(DEBUG) printf("RES IS %d\n", res);
 	}
 }
 

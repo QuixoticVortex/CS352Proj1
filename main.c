@@ -21,7 +21,7 @@ void do_something()
 	printf("ult %d starts I/O \n",id);
 	uthread_startIO();
 	sleep (1); //simulate some long−time I/O operation
-	printf("calling endIO - %d \n", id);
+	// printf("calling endIO - %d \n", id);
 	uthread_endIO();
 	printf("ult %d returns from I/O \n",id); 
 	//printf("ult %d exits\n", id);
@@ -31,7 +31,7 @@ void do_something()
 
 void do_nothing() {
 	int id = myid++;
-	printf("enter child thread %d and start IO\n", id);
+	printf("- enter child thread %d and start IO\n", id);
 	uthread_startIO();
 	//sleep(1);
 	int b = 0;
@@ -39,32 +39,31 @@ void do_nothing() {
 	for(i = 0; i < 1000; i++) {
 		b++;
 	}
-	printf("after sleep in child %d\n", id);
+	printf("- after sleep in child %d\n", id);
 	uthread_endIO();
-	printf("child thread %d endIO\n", id);	
+	printf("- child thread %d endIO\n", id);	
 	uthread_exit();
-	printf("after exit - child %d\n", id);
+	printf("- after exit - child %d\n", id);
 }
 
 int main()
 {
-	/*int i ;
+	int i ;
 	system_init ();
 	printf("create first thread\n");
 	uthread_create(do_something);
 	printf("main exits\n");
 	uthread_exit ();
-	printf("After exit - main?\n");*/
+	printf("After exit - main?\n");
 
-	system_init();
+/*	system_init();
 	uthread_create(do_nothing);
-	uthread_create(do_nothing);
-	printf("start IO\n");
+	printf("- start IO\n");
 	uthread_startIO();
-	sleep(1);
-	printf("after main sleep\n");
+	//sleep(1);
+	printf("- after main sleep\n");
 	uthread_endIO();
-	printf("ended IO\n");
+	printf("- ended IO\n");
 	uthread_exit();
-	printf("after exit - main\n");
+	printf("- after exit - main\n"); */
 }
