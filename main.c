@@ -1,4 +1,4 @@
-#include "uthread.c" //suppose the uthread library code is in uthread.c
+#include "uthread.h" //suppose the uthread library code is in uthread.c
 #include <stdio.h>
 int n_threads=0;
 int myid=0;
@@ -26,7 +26,7 @@ void do_something()
 	printf("ult %d returns from I/O \n",id); 
 	//printf("ult %d exits\n", id);
 	uthread_exit ();
-	printf("After exit - %d?\n\n", id);
+	//printf("After exit - %d?\n\n", id);
 }
 
 void do_nothing() {
@@ -54,7 +54,7 @@ int main()
 	uthread_create(do_something);
 	printf("main exits\n");
 	uthread_exit ();
-	printf("After exit - main?\n");
+	//printf("After exit - main?\n");
 
 /*	system_init();
 	uthread_create(do_nothing);
@@ -65,5 +65,5 @@ int main()
 	uthread_endIO();
 	printf("- ended IO\n");
 	uthread_exit();
-	printf("- after exit - main\n"); */
+	printf("- after exit - main\n");*/
 }
